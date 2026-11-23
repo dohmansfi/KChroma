@@ -1,19 +1,19 @@
 
-#include <klang.h>
+#include "klang.h"
 using namespace klang::optimised;
 
 // cubic shaping function
-signal cubed(signal x) {
+static mono::signal cubed(mono::signal x) {
     return x * x * x;  // raises the input to the 3rd power.
 }
 
-// non-linear exponential shaping
-signal nonlinear(signal x) {
-    return pow(10, 2 * (x - 1));
-}
+// // non-linear exponential shaping
+// static mono::signal nonlinear(mono::signal x) {
+//     return pow(10, 2 * (x - 1));
+// }
 
 // linear mapping 0..1 to min..max
-param linearMap(param x, int min, int max) {
+static param linearMap(param x, int min, int max) {
 	return x * (max - min) + min;
 }
 
@@ -23,26 +23,26 @@ struct LFO : Modifier {
 	Triangle tri;
 	Saw saw;
 	LPF lpf;
-	signal lfo;
+	mono::signal lfo;
 	
 	/** SIGMOID BLENDING FUNCTION
 		creates a smooth transition between waveforms based on a control parameter (`position`).
 		`center` defines the midpoint of the transition, and `sharpness` defines how steep the transition is.
 	*/
-	signal sigmoidBlend(param position, float center, float sharpness = 10.0) {
+	mono::signal sigmoidBlend(param position, float center, float sharpness = 10.0) {
 		return 1.0 / (1.0 + exp(-sharpness * (position - center)));
 	}
 	
 	void set(param rate, param shape) {
 		// compute blending weights for morphing
-        signal blend1 = sigmoidBlend(shape * 2, 0.5);  // sine to triangle
-        signal blend2 = sigmoidBlend(shape * 2, 1.5);  // triangle to saw
+        mono::signal blend1 = sigmoidBlend(shape * 2, 0.5);  // sine to triangle
+        mono::signal blend2 = sigmoidBlend(shape * 2, 1.5);  // triangle to saw
 		
 		// mod signals
-        signal sinMod = sin(rate) * 0.5 + 0.5;
-        signal triMod = tri(rate) * 0.5 + 0.5;
-        signal sawMod = saw(rate) * 0.5 + 0.5;
-        signal smoothSaw = sawMod >> lpf(500);  // smooth the saw wave to avoid clicks or harsh transitions
+        mono::signal sinMod = sin(rate) * 0.5 + 0.5;
+        mono::signal triMod = tri(rate) * 0.5 + 0.5;
+        mono::signal sawMod = saw(rate) * 0.5 + 0.5;
+        mono::signal smoothSaw = sawMod >> lpf(500);  // smooth the saw wave to avoid clicks or harsh transitions
         lfo = (1.0 - blend1) * sinMod + (blend1 - blend2) * triMod + blend2 * smoothSaw;
 	}
 	
@@ -89,7 +89,7 @@ struct CCF : Effect {
 struct Flanger : Stereo::Effect {
 	Stereo::Delay<192000> delay;
 	Triangle lfo;
-	signal mod;
+	mono::signal mod;
 	
 	void set(param rate, param depth) {
 		mod = lfo(rate) * depth + depth;
@@ -108,7 +108,7 @@ Sine gleamMod[2];        // two LFOs to modulate each channel
 param a;                 // modulation amount
 param spread;            // spacing between delays
 
-	signal tap(Delay<192000>& buffer, signal x, param time, param gain) {
+	mono::signal tap(Delay<192000>& buffer, mono::signal x, param time, param gain) {
 		x >> buffer;
 		return x + buffer(time * fs) * gain;
 	}
@@ -120,14 +120,14 @@ param spread;            // spacing between delays
 	
 	void process() {
 		// LFO modulations for both channels
-		signal mod1 = gleamMod[0](a * 2, 0);
-		signal mod2 = gleamMod[1](a * 2, 0.25);
+		mono::signal mod1 = gleamMod[0](a * 2, 0);
+		mono::signal mod2 = gleamMod[1](a * 2, 0.25);
 		
 		// apply cross-feedback delays with subtle timing differences
-		signal left  = tap(gleam[0], in.l, (0.04 * spread) + mod1, a * 0.75)
-                     - tap(gleam[1], in.r, (0.05 * spread) + mod2, a * 0.75);
-        signal right = tap(gleam[2], in.r, (0.03 * spread) + mod1, a * 0.75)
-                     - tap(gleam[3], in.l, (0.06 * spread) + mod2, a * 0.75);
+		mono::signal left  = tap(gleam[0], in.l, (0.04 * spread) + mod1, a * 0.75)
+                           - tap(gleam[1], in.r, (0.05 * spread) + mod2, a * 0.75);
+        mono::signal right = tap(gleam[2], in.r, (0.03 * spread) + mod1, a * 0.75)
+                           - tap(gleam[3], in.l, (0.06 * spread) + mod2, a * 0.75);
                      
         in.l + left >> out.l;
         in.r + right >> out.r;
@@ -138,19 +138,8 @@ param spread;            // spacing between delays
 
 // -- HARMONICS TABLES --
 struct HarmonicsTable {
-	float amplitude[N_HARMONICS];  // stores gain values for each harmonic
+    float amplitude[N_HARMONICS];  // stores gain values for each harmonic
 };
-
-HarmonicsTable tableA {  // saw wave (odd and even harmonics)
-	{ 1.0, 0.5, 0.333, 0.25, 0.2, 0.167, 0.143, 0.125,
-	  0.111, 0.1, 0.091, 0.083, 0.077, 0.071, 0.067, 0.063 }
-};
-
-HarmonicsTable tableB {  // square wave (odd harmonics)
-	{ 1.0, 0.0, 0.333, 0.0, 0.2, 0.0, 0.143, 0.0,
-	  0.111, 0.0, 0.091, 0.0, 0.077, 0.0, 0.067, 0.0 }
-};
-
 
 // -- OSCILLATOR --
 struct ChromaOsc : Oscillator {
@@ -183,12 +172,40 @@ struct Chroma : Stereo::Synth {
 Flanger flanger;
 Glimmer glimmer;
 Stereo::Delay<192000> pingPong;
+    
+    HarmonicsTable tableA {  // saw wave (odd and even harmonics)
+        { 1.0, 0.5, 0.333, 0.25, 0.2, 0.167, 0.143, 0.125,
+          0.111, 0.1, 0.091, 0.083, 0.077, 0.071, 0.067, 0.063 }
+    };
+
+    HarmonicsTable tableB {  // square wave (odd harmonics)
+        { 1.0, 0.0, 0.333, 0.0, 0.2, 0.0, 0.143, 0.0,
+          0.111, 0.0, 0.091, 0.0, 0.077, 0.0, 0.067, 0.0 }
+    };
+
+    void getHarmonicTable(int bank /*0=A, 1=B*/, float* dest16) const noexcept
+    {
+        const HarmonicsTable& T = (bank == 0 ? tableA : tableB);
+        for (int h = 0; h < N_HARMONICS; ++h)
+            dest16[h] = T.amplitude[h];
+    }
+    
+    void setHarmonicTable (int bank /*0=A,1=B*/, const float* src16) noexcept
+    {
+        HarmonicsTable& T = (bank == 0 ? tableA : tableB);
+        for (int h = 0; h < N_HARMONICS; ++h)
+            T.amplitude[h] = src16[h];
+    }
 
 	struct ChromaNote : public Mono::Note {
 		ChromaOsc osc;
         ADSR adsr, mod;
         LFO lfo;
         CCF filter;
+
+    	Chroma* chroma = nullptr;  // owning synth — set when klang attaches this note
+
+    	void init() override { chroma = static_cast<Chroma*>(getSynth()); }
 
 		event on(Pitch pitch, Amplitude velocity) {
 			const param f = pitch -> Frequency;
@@ -206,9 +223,9 @@ Stereo::Delay<192000> pingPong;
 			// morph oscillator via LFO or ENV
 			int morph = controls[2];
 			if (morph)
-				osc.morph(lfo * controls[3], tableA, tableB);
+				osc.morph(lfo * controls[3], chroma->tableA, chroma->tableB);
 			if (!morph)
-				osc.morph(mod * controls[3], tableA, tableB);
+				osc.morph(mod * controls[3], chroma->tableA, chroma->tableB);
 				
 			// LFO settings
 			lfo.set(controls[35] * 8, controls[36] * 2);
@@ -264,9 +281,9 @@ Stereo::Delay<192000> pingPong;
 		
 		int delay = controls[42];
 		if (delay) {  // ping-pong delay
-			stereo::signal time = { controls[43], controls[44] };
+			stereo::signal time = { controls[43].smooth(), controls[44].smooth() };
 			stereo::signal gain = { controls[45], controls[45] };
-			param amount = controls[46] * 0.8;
+			param amount = controls[46].smooth() * 0.8;
 			wet + pingPong(time * fs) * gain * amount >> wet;
 			pingPong.l << wet.r;
 			pingPong.r << wet.l;
@@ -280,67 +297,67 @@ Stereo::Delay<192000> pingPong;
 
 	Chroma() {
 		controls = {
-			/* OSCILLATOR */											 //    OSCILLATOR
-                Menu   ("HARMONICS", { 15, 25, 45, 18 }, "A", "B"),  	 // 00 ├ HARMONICS TABLES
-                Toggle ("E", 0, { 66, 25, 18, 18 }),    			 	 // 01 │
-                Menu   ("MORPH", { 15, 65, 45, 18 }, "MOD", "LFO"),  	 // 02 │
-                Dial   ("", 0, 1, 0, { 66, 65, 18, 18 }),            	 // 03 ├ morph amount									
-                Slider ("1",  0, 1, 0, { 90,  25, 10, 60 }),	     	 // 04 └ HARMONICS' AMPLITUDES
-                Slider ("2",  0, 1, 0, { 105, 25, 10, 60 }),	     	 // 05   │
-                Slider ("3",  0, 1, 0, { 120, 25, 10, 60 }),	  	 	 // 06   │
-                Slider ("4",  0, 1, 0, { 135, 25, 10, 60 }),	  	 	 // 07   │
-                Slider ("5",  0, 1, 0, { 150, 25, 10, 60 }),	  	 	 // 08   │
-                Slider ("6",  0, 1, 0, { 165, 25, 10, 60 }),	  	 	 // 09   │
-                Slider ("7",  0, 1, 0, { 180, 25, 10, 60 }),	  	 	 // 10   │
-                Slider ("8",  0, 1, 0, { 195, 25, 10, 60 }),	  	 	 // 11   │
-                Slider ("9",  0, 1, 0, { 210, 25, 10, 60 }),	  	 	 // 12   │
-                Slider ("10", 0, 1, 0, { 225, 25, 10, 60 }),	  	 	 // 13   │
-                Slider ("11", 0, 1, 0, { 240, 25, 10, 60 }),	  	 	 // 14   │
-                Slider ("12", 0, 1, 0, { 255, 25, 10, 60 }),	  	 	 // 15   │
-                Slider ("13", 0, 1, 0, { 270, 25, 10, 60 }),	  	 	 // 16   │
-                Slider ("14", 0, 1, 0, { 285, 25, 10, 60 }),	  	 	 // 17   │
-                Slider ("15", 0, 1, 0, { 300, 25, 10, 60 }),	  	 	 // 18   │
-                Slider ("16", 0, 1, 0, { 315, 25, 10, 60 }),   	     	 // 19   └
+			/* OSCILLATOR */											  //    OSCILLATOR
+                Menu   ("harmonics", { 15, 25, 45, 18 }, "A", "B"),  	  // 00 ├ HARMONICS TABLES
+                Toggle ("edit", 0, { 66, 25, 18, 18 }),    			 	  // 01 │
+                Menu   ("morph", { 15, 65, 45, 18 }, "env", "lfo"),  	  // 02 │
+                Dial   ("morphAmount", 0, 1, 0, { 66, 65, 18, 18 }),      // 03 ├ morph amount
+                Slider ("pOne",  0, 1, 0, { 90,  25, 10, 60 }),	          // 04 └ HARMONICS' AMPLITUDES
+                Slider ("pTwo",  0, 1, 0, { 105, 25, 10, 60 }),	          // 05   │
+                Slider ("pThree",  0, 1, 0, { 120, 25, 10, 60 }),	      // 06   │
+                Slider ("pFour",  0, 1, 0, { 135, 25, 10, 60 }),	      // 07   │
+                Slider ("pFive",  0, 1, 0, { 150, 25, 10, 60 }),	      // 08   │
+                Slider ("pSix",  0, 1, 0, { 165, 25, 10, 60 }),	          // 09   │
+                Slider ("pSeven",  0, 1, 0, { 180, 25, 10, 60 }),	      // 10   │
+                Slider ("pEight",  0, 1, 0, { 195, 25, 10, 60 }),	      // 11   │
+                Slider ("pNine",  0, 1, 0, { 210, 25, 10, 60 }),	      // 12   │
+                Slider ("pTen", 0, 1, 0, { 225, 25, 10, 60 }),	          // 13   │
+                Slider ("pEleven", 0, 1, 0, { 240, 25, 10, 60 }),	      // 14   │
+                Slider ("pTwelve", 0, 1, 0, { 255, 25, 10, 60 }),	      // 15   │
+                Slider ("pThirteen", 0, 1, 0, { 270, 25, 10, 60 }),       // 16   │
+                Slider ("pFourteen", 0, 1, 0, { 285, 25, 10, 60 }),       // 17   │
+                Slider ("pFifteen", 0, 1, 0, { 300, 25, 10, 60 }),        // 18   │
+                Slider ("pSixteen", 0, 1, 0, { 315, 25, 10, 60 }),        // 19   └
 					   	
-			{ "FILTER",												 	 //    FILTER
-                Toggle ("HP", 0, { 341, 30, 18, 18 }),               	 // 20 │
-                Toggle ("LP", 0, { 367, 30, 18, 18 }),               	 // 21 │
-                Menu   ("SHAPE", { 340, 70, 45, 18 }, "MOD", "LFO"),	 // 22 │
-                Dial   ("CUTOFF", 0, 1, 0, { 340, 110, 40, 40 }),  		 // 23 │
-                Dial   ("", -1, 1, 0, { 369, 104, 18, 18 }),    	 	 // 24 ├ f mod amount
-                Dial   ("Q", 0, 1, 0, { 340, 170, 40, 40 }),    	 	 // 25 │
-                Dial   ("", -1, 1, 0, { 369, 164, 18, 18 }),    	 	 // 26 └ q mod amount 
-            },  
+			{ "FILTER",												 	  //    FILTER
+                Toggle ("highPass", 0, { 341, 30, 18, 18 }),              // 20 │
+                Toggle ("lowPass", 0, { 367, 30, 18, 18 }),               // 21 │
+                Menu   ("filterMod", { 340, 70, 45, 18 }, "env", "lfo"),  // 22 │
+                Dial   ("cutoff", 0, 1, 0, { 340, 110, 40, 40 }),  		  // 23 │
+                Dial   ("cutoffMod", -1, 1, 0, { 369, 104, 18, 18 }),     // 24 ├ f mod amount
+                Dial   ("q", 0, 1, 0, { 340, 170, 40, 40 }),    	 	  // 25 │
+                Dial   ("qMod", -1, 1, 0, { 369, 164, 18, 18 }),    	  // 26 └ q mod amount
+            },
                           
-			{ "AMP ENV  /   MOD ENV",						 			 //    ENVELOPES
-                Dial   ("ATTACK", 0, 1, 0, { 15,  130, 40, 40 }),	 	 // 27 ├ AMP
-                Dial   ("DECAY", 0.0, 1, 0.5, { 65,  130, 40, 40 }),	 // 28 │ │
-                Dial   ("SUSTAIN", 0, 1, 0.75, { 115, 130, 40, 40 }),	 // 29 │ │
-                Dial   ("RELEASE", 0, 1, 0.5, { 165, 130, 40, 40 }),   	 // 30 │ └
-                Dial   ("", 0, 1, 0, { 44,  124, 18, 18 }),          	 // 31 └ MOD attack
-                Dial   ("", 0.0, 1, 0, { 94, 124, 18, 18 }),        	 // 32   ├	 decay
-                Dial   ("", 0, 1, 0, { 144, 124, 18, 18 }),          	 // 33   ├	 sustain
-                Dial   ("", 0, 1, 0, { 194, 124, 18, 18 }) 			 	 // 34   └	 release
-            },     	 
+			{ "AMP ENV  /   MOD ENV",						 			  //    ENVELOPES
+                Dial   ("attack", 0, 1, 0, { 15,  130, 40, 40 }),	 	  // 27 ├ AMP
+                Dial   ("decay", 0.0, 1, 0.5, { 65,  130, 40, 40 }),	  // 28 │ │
+                Dial   ("sustain", 0, 1, 0.75, { 115, 130, 40, 40 }),	  // 29 │ │
+                Dial   ("release", 0, 1, 0.5, { 165, 130, 40, 40 }),   	  // 30 │ └
+                Dial   ("modAttack", 0, 1, 0, { 44,  124, 18, 18 }),      // 31 └ MOD attack
+                Dial   ("modDecay", 0.0, 1, 0, { 94, 124, 18, 18 }),      // 32   ├	 decay
+                Dial   ("modSustain", 0, 1, 0, { 144, 124, 18, 18 }),     // 33   ├	 sustain
+                Dial   ("modRelease", 0, 1, 0, { 194, 124, 18, 18 })      // 34   └	 release
+            },
 			
 			{ "LFO",
-                Dial   ("RATE",  0, 1, 0, { 231, 130, 40, 40 }),     	 // 35 LFO
-                Dial   ("SHAPE", 0, 1, 0, { 281, 130, 40, 40 })      	 // 36 └
-            },   
+                Dial   ("modRate",  0, 1, 0, { 231, 130, 40, 40 }),       // 35 LFO
+                Dial   ("modShape", 0, 1, 0, { 281, 130, 40, 40 })        // 36 └
+            },
 					
-			/* MIXER */													 //    EFFECTS
-                Toggle ("FLANGER", 0, { 15, 185, 40, 18 }),          	 // 37 ├ FLANGER
-                Dial   ("", 0.1, 1, 0, { 65, 185, 18, 18 }),			 // 38 │ ├ rate
-                Dial   ("", 0.1, 5, 0, { 88, 185, 18, 18 }),			 // 39 │ └ depth
-                Toggle ("GLIMMER", 0, { 15, 210, 40, 18 }),			 	 // 40 ├ GLIMMER
-                Dial   ("", 0.1, 1, 0, { 65, 210, 18, 18 }),			 // 41 │ └ amount
-                Toggle ("DELAY", 0, { 115, 185, 40, 18 }),			 	 // 42 ├ DELAY
-                Dial   ("", 0, 1, 0, { 165, 185, 18, 18 }),			 	 // 43 │ ├ time left
-                Dial   ("", 0, 1, 0, { 188, 185, 18, 18 }),			 	 // 44 │ ├ time right
-                Dial   ("", 0, 1, 0, { 165, 210, 18, 18 }),			 	 // 45 │ ├ feedback
-                Dial   ("", 0, 1, 0, { 188, 210, 18, 18 }),			 	 // 46 │ └ gain
-                Dial   ("FX", 0, 1, 0, { 239, 205, 24, 23 }),		 	 // 47 └ DRY / WET
-                Dial   ("VOLUME", 0, 1.5, 1, { 289, 205, 24, 23 })	 	 // 48 OUT VOLUME
+			/* MIXER */													  //    EFFECTS
+                Toggle ("flanger", 0, { 15, 185, 40, 18 }),          	  // 37 ├ FLANGER
+                Dial   ("flangerRate", 0.1, 1, 0, { 65, 185, 18, 18 }),	  // 38 │ ├ rate
+                Dial   ("flangerDepth", 0.1, 5, 0, { 88, 185, 18, 18 }),  // 39 │ └ depth
+                Toggle ("glimmer", 0, { 15, 210, 40, 18 }),			 	  // 40 ├ GLIMMER
+                Dial   ("glimmerAmount", 0.1, 1, 0, { 65, 210, 18, 18 }), // 41 │ └ amount
+                Toggle ("delay", 0, { 115, 185, 40, 18 }),			 	  // 42 ├ DELAY
+                Dial   ("delayTimeL", 0, 1, 0, { 165, 185, 18, 18 }),	  // 43 │ ├ time left
+                Dial   ("delayTimeR", 0, 1, 0, { 188, 185, 18, 18 }),	  // 44 │ ├ time right
+                Dial   ("delayFeedback", 0, 1, 0, { 165, 210, 18, 18 }),  // 45 │ ├ feedback
+                Dial   ("delayGain", 0, 1, 0, { 188, 210, 18, 18 }),	  // 46 │ └ gain
+                Dial   ("fx", 0, 1, 0, { 239, 205, 24, 23 }),		 	  // 47 └ DRY / WET
+                Dial   ("volume", 0, 1.5, 1, { 289, 205, 24, 23 })	 	  // 48 OUT VOLUME
 		};
 		
 		presets = {

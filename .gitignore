@@ -1,2 +1,11 @@
+*
+
+# Keep
+!.gitignore
+!README.md
+!Chroma.k
+
+!img/
+!img/**
+
 .DS_Store
-img/.DS_Store
